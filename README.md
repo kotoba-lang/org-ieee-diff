@@ -60,9 +60,10 @@ marks between two common lines as one hunk.
 
 - **No `-u` / `-U` / `-c`** (time zone, above), no `-r`, `-i`, `-w`, `-b`,
   `-B`, no directories, no `Binary files … differ`.
-- **Process substitution is out of scope** — literally: `<(…)` operands are
-  `/dev/fd/N` paths, and a packaged command reads only beneath the
-  directories it was granted. Packaging with `/dev/fd` in the scope is a
-  question for the packager, not this program.
+- **Process substitution works when the binary is packaged with `/dev/fd`
+  in its scope** — `<(…)` operands are `/dev/fd/N` paths, and since amu
+  #1019 a scope entry that *is* `/dev/fd` means "the descriptors the caller
+  connected" (the trust standard input already has). The suite runs four
+  pairs through `bash -c 'diff <(cat a) <(cat b)'` on both binaries.
 - Capabilities: `:cli/args` (38), `:fs/app-data` (35), `:io/write` (37),
   `:io/write-error` (39).
