@@ -118,7 +118,9 @@
       ;; case has D = 120 and n + m about 6,000, so the cap is what is
       ;; allocated and the item budget must hold it plus the rows and S.
       (let [p (run "node" [kbb "--backend" "sci" packager "--code" blob "--offset" offset "--isa" "aarch64"
-                           "--allow" "35,37,38,39" "--fs-scope" (.realpathSync fs data)
+                           ;; /dev/fd in the scope: "the descriptors the caller connected",
+                           ;; so `diff <(a) <(b)` works (amu #1019).
+                           "--allow" "35,37,38,39" "--fs-scope" (str (.realpathSync fs data) ":/dev/fd")
                            "--fuel" "4000000000" "--pairs" "2000000" "--string-pool" "64000000"
                            "--vectors" "1024" "--vector-items" "8388608" "--output" exe] {})]
         (when (not= 0 (:status p)) (refuse (str "package failed: " (str (:err p)))))))
@@ -144,7 +146,23 @@
                            (= (:status k) (:exit d)))]
               {:argv [(:argv d) :divergence] :ok ok? :kotoba (.toString (:out k) "utf8") :system "(not compared)"
                :kotoba-err (.toString (:err k) "utf8") :system-err (:err d) :exit [(:status k) (:exit d)]}))
-          all (concat results div-results)
+          ;; Process substitution, the shape 316 of the 888 measured diff
+          ;; calls take: both operands are /dev/fd/N pipes. Through bash, on
+          ;; both binaries, compared like every other case.
+          psub-results
+          (for [[a b] [["a1" "b1"] ["a1" "same"] ["empty" "one"] ["big-a" "big-b"]]]
+            (let [cmd (fn [exe'] (str "'" exe' "' <(cat '" (.join path real a) "') <(cat '" (.join path real b) "')"))
+                  k (run "bash" ["-c" (cmd exe)] {})
+                  s (run "bash" ["-c" (cmd system-diff)] {})
+                  ;; The operand names differ between the two runs
+                  ;; (/dev/fd/63 vs /dev/fd/62 is whatever bash picked), and
+                  ;; only -q prints them -- normal output never does.
+                  same? (and (= (b64 (:out k)) (b64 (:out s))) (= (b64 (:err k)) (b64 (:err s)))
+                             (= (:status k) (:status s)))]
+              {:argv [:psub a b] :ok same? :kotoba (.toString (:out k) "utf8") :system (.toString (:out s) "utf8")
+               :kotoba-err (.toString (:err k) "utf8") :system-err (.toString (:err s) "utf8")
+               :exit [(:status k) (:status s)]}))
+          all (concat results psub-results div-results)
           bad (remove :ok all)]
       (doseq [r all]
         (println (str (if (:ok r) "  ok   " "  FAIL ") (pr-str (:argv r))
@@ -152,6 +170,6 @@
                       (when-not (:ok r) (str " but " system-diff " says " (pr-str (subs (:system r) 0 (min 80 (count (:system r)))))
                                              " exits " (pr-str (:exit r))
                                              " stderr " (pr-str (:kotoba-err r)) " vs " (pr-str (:system-err r)))))))
-      (println (pr-str {:ok (empty? bad) :cases (count all) :compared (count results)
+      (println (pr-str {:ok (empty? bad) :cases (count all) :compared (+ (count results) (count psub-results))
                         :divergences (count div-results) :failed (count bad)}))
       (.exit js/process (if (seq bad) 1 0)))))
